@@ -1,85 +1,118 @@
 import makeWASocket, {
-    useMultiFileAuthState,
-    fetchLatestBaileysVersion,
-    DisconnectReason
-} from "@whiskeysockets/baileys";
+  useMultiFileAuthState,
+  DisconnectReason
+} from "@whiskeysockets/baileys"
 
-import pino from "pino";
-import readline from "readline";
-import { loadPlugins } from "./lib/loader.js";
+import fs from "fs"
+import path from "path"
+import { fileURLToPath } from "url"
+import express from "express"   // ✅ ADDED FOR RENDER
 
-const logger = pino({ level: "silent" });
+// ✅ RENDER PORT FIX (ADDED — NOTHING REMOVED)
+const app = express()
+const PORT = process.env.PORT || 3000
 
-const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-});
+app.get("/", (req, res) => {
+  res.send("⚔️ WABBOT is running on Render")
+})
 
-function ask(text) {
-    return new Promise(resolve => rl.question(text, resolve));
+app.listen(PORT, () => {
+  console.log("🌐 Web server active on port", PORT)
+})
+// ✅ END OF RENDER FIX
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
+// Store plugins
+const plugins = new Map()
+
+// 🔌 Load all plugins from /plugins folder
+async function loadPlugins() {
+  const pluginDir = path.join(__dirname, "plugins")
+
+  if (!fs.existsSync(pluginDir)) {
+    console.log("⚠️ plugins folder not found")
+    return
+  }
+
+  const files = fs.readdirSync(pluginDir)
+
+  for (const file of files) {
+    if (file.endsWith(".js")) {
+      try {
+        const plugin = await import(`./plugins/${file}`)
+        const cmd = plugin.default.command
+        plugins.set(cmd, plugin.default)
+        console.log(`✅ Loaded plugin: ${cmd}`)
+      } catch (err) {
+        console.log(`❌ Failed to load ${file}`, err)
+      }
+    }
+  }
 }
 
+// 🚀 Start WABBOT
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState("./auth");
-    const { version } = await fetchLatestBaileysVersion();
+  const { state, saveCreds } = await useMultiFileAuthState("./auth_info")
 
-    const sock = makeWASocket({
-        version,
-        auth: state,
-        logger,
-        printQRInTerminal: false
-    });
+  const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: true
+  })
 
-    sock.ev.on("creds.update", saveCreds);
+  sock.ev.on("creds.update", saveCreds)
 
-    // 🔥 PAIRING CODE LOGIN
-    if (!sock.authState.creds.registered) {
-        const number = await ask("📱 Enter WhatsApp number (no +): ");
+  sock.ev.on("connection.update", (update) => {
+    const { connection, lastDisconnect } = update
 
-        const code = await sock.requestPairingCode(number.trim());
+    if (connection === "close") {
+      const shouldReconnect =
+        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut
 
-        console.log("\n🔥 PAIRING CODE:");
-        console.log(code);
-        console.log("\n👉 Go to WhatsApp → Linked Devices → Link with code\n");
+      console.log("❌ Connection closed")
+
+      if (shouldReconnect) {
+        console.log("🔄 Reconnecting...")
+        startBot()
+      }
     }
 
-    const plugins = await loadPlugins();
+    if (connection === "open") {
+      console.log("✅ WABBOT Connected Successfully")
+    }
+  })
 
-    sock.ev.on("messages.upsert", async ({ messages }) => {
-        const msg = messages[0];
-        if (!msg.message) return;
+  // 📩 Listen for messages
+  sock.ev.on("messages.upsert", async ({ messages }) => {
+    const msg = messages[0]
+    if (!msg.message || msg.key.fromMe) return
 
-        const text =
-            msg.message.conversation ||
-            msg.message.extendedTextMessage?.text;
+    const sender = msg.key.remoteJid
 
-        const sender = msg.key.remoteJid;
+    const messageText =
+      msg.message.conversation ||
+      msg.message.extendedTextMessage?.text ||
+      ""
 
-        if (!text) return;
+    if (!messageText.startsWith(".")) return
 
-        for (let p of plugins) {
-            if (text.startsWith(p.command)) {
-                p.run(sock, sender, text);
-            }
-        }
-    });
+    const args = messageText.trim().split(" ")
+    const command = args[0]
+    const text = args.slice(1).join(" ")
 
-    sock.ev.on("connection.update", (update) => {
-        const { connection, lastDisconnect } = update;
+    const plugin = plugins.get(command)
+    if (!plugin) return
 
-        if (connection === "close") {
-            const shouldReconnect =
-                lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-
-            if (shouldReconnect) startBot();
-        }
-
-        if (connection === "open") {
-            console.log("✅ WABBOT CONNECTED");
-        }
-    });
-
-    console.log("🔥 STARTING WABBOT...");
+    try {
+      await plugin.run(sock, sender, text)
+    } catch (error) {
+      console.log("Plugin Error:", error)
+      sock.sendMessage(sender, { text: "❌ Error running command." })
+    }
+  })
 }
 
-startBot();
+// 🔥 Initialize
+await loadPlugins()
+startBot()
