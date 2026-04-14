@@ -1,0 +1,14 @@
+{
+  "name": "wabbot",
+  "version": "1.0.0",
+  "description": "MD style WhatsApp bot",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "latest",
+    "pino": "latest"
+  }
+}
