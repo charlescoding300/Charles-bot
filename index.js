@@ -6,20 +6,6 @@ import makeWASocket, {
 import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
-import express from "express"   // ✅ ADDED FOR RENDER
-
-// ✅ RENDER PORT FIX (ADDED — NOTHING REMOVED)
-const app = express()
-const PORT = process.env.PORT || 3000
-
-app.get("/", (req, res) => {
-  res.send("⚔️ WABBOT is running on Render")
-})
-
-app.listen(PORT, () => {
-  console.log("🌐 Web server active on port", PORT)
-})
-// ✅ END OF RENDER FIX
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -58,10 +44,19 @@ async function startBot() {
 
   const sock = makeWASocket({
     auth: state,
-    printQRInTerminal: true
+    printQRInTerminal: false,
+    browser: ["WABBOT", "Chrome", "1.0.0"]
   })
 
   sock.ev.on("creds.update", saveCreds)
+
+  // 📱 PAIRING CODE LOGIN
+  if (!sock.authState.creds.registered) {
+    const phoneNumber = "234XXXXXXXXXX" // 👈 CHANGE THIS TO YOUR NUMBER
+
+    const code = await sock.requestPairingCode(phoneNumber)
+    console.log("📱 PAIRING CODE:", code)
+  }
 
   sock.ev.on("connection.update", (update) => {
     const { connection, lastDisconnect } = update
